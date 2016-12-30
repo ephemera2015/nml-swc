@@ -146,8 +146,13 @@ class NmlParser(object):
         self.o_inedges=deepcopy(self.inedges)
     
     
-def parseOneFile(filename,radius,kind):
-    return NmlParser(filename,radius,kind).process()
+def parseOneFile(filename,radius,kind):    
+    try:
+        result=NmlParser(filename,radius,kind).process()
+    except:
+        print 'sorry,fail to parse '+filename
+        return[]
+    return result
     
 def write2File(result,fname):
     with open(fname,'wb') as f:
