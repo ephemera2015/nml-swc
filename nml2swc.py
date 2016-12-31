@@ -1,40 +1,81 @@
-#!/usr/bin/python
+import sys
+import os
+import argparse
 try:
     from lxml import etree
 except ImportError:
-    print 'lxml library is required'
-    raise
+    raise ImportError('lxml library is required')
 try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
-    
 from copy import deepcopy
-import sys
-import os
+from zipfile import ZipFile
+
+__doc__='''
+this module helps convert nml or nmx format files to swc format files.
+there are two ways to use this module:
+(1) python somefile.nml(or somefile.nmx) [-o output file name or directory] [--radius radius of swc node default is 1.0]
+(2) use this module in your project:
+    from  nml2swc import parseFile
+    parseFile(somefile.nml(or somefile.nmx),output file name or directory,radius)
+'''
 
 class NmlParser(object):
-    def __init__(self,filename,radius,kind):
+    def __init__(self,nml,radius,kind):
         super(NmlParser,self).__init__()
         self.processed=[]
         self.id=1
-        self.filename=filename
+        self.nml=nml
         self.kind=kind
         self.radius=radius
-        self.mapping={}
         self.result=[]
-        self.stack=[]
-        self.queue=[]      
-        
+   
     def process(self):
-        self.nml=etree.parse(self.filename)
         self._getParamsAndComments()
-        self._getNodes()
-        self._getEdges()
-        for node in self.nodes.keys():
-            self._process(node)
+        self._createGraph()
+        self._dfs()
         return self.result
     
+    def _createGraph(self):
+        self.nodes={node.get('id'):
+            {'x':node.get('x'),'y':node.get('y'),
+             'z':node.get('z'),'visited':False,'index':sys.maxint,'child':[]} 
+             for node in self.nml.xpath(r'//node')}
+        for edge in self.nml.xpath(r'//edge'):
+            s=edge.get('source')
+            t=edge.get('target')
+            self.nodes[s]['child'].append(t)
+            self.nodes[t]['child'].append(s)
+    
+    def _dfs(self):
+        for node,attr in self.nodes.items():
+            if not attr['visited']:
+                self._dfs_(node,attr,-1)
+    
+    def _dfs_(self,node,attr,parent):
+        attr['visited']=True
+        attr['index']=self.id
+        self.id+=1
+        self._outputNode(attr,parent)
+        for c in attr['child']:
+            cattr=self.nodes[c]
+            #recursively visit children
+            if not cattr['visited']: 
+                self._dfs_(c,cattr,attr['index'])
+            #handle loop when traceback
+            else:
+                if cattr['index']>attr['index']:
+                    nattr=deepcopy(cattr)
+                    nattr['index']=self.id
+                    self.id+=1
+                    self._outputNode(nattr,attr['index'])
+  
+    def _outputNode(self,attr,parent):
+        record="{id} {t} {x} {y} {z} {r} {p}".format(id=attr['index'],
+        x=attr['x'],y=attr['y'],z=attr['z'],t=self.kind,r=self.radius,p=parent)
+        self.result.append(record)
+            
     def _getParamsAndComments(self):        
         for param in self.nml.xpath(r'//parameters'):
             p=StringIO(etree.tostring(param))
@@ -45,115 +86,7 @@ class NmlParser(object):
             for line in c.readlines():
                 self.result.append('#'+line)
         
-    def _process(self,node):
-        if node  in self.processed:
-            return
-        parents=self.inedges.get(node,[])
-        #if node has no parents than we output it
-        if not parents:
-            self._outputNode(node)
-        #if node has parents we should recursively output its parents first
-        else:
-            self._instack(node,parents)   
-    
-    def _outputNode(self,node):
-        if node not in self.processed:
-            self.mapping[node]=self.id
-            parents=self.o_inedges.get(node,[])
-            if parents:
-                for p in parents:
-                    #ensure that node output behind all its parents 
-                    assert (p in self.processed)
-                    record="{id} {t} {x} {y} {z} {r} {p}".format(id=self.id,
-                    x=self.nodes[node][0],y=self.nodes[node][1],z=self.nodes[node][2],
-                    p=self.mapping[p],r=self.radius,t=self.kind)
-                    self.result.append(record)
-                    self.id+=1
-            else:
-                record="{id} {t} {x} {y} {z} {r} {p}".format(id=self.id,
-                x=self.nodes[node][0],y=self.nodes[node][1],z=self.nodes[node][2],
-                p=-1,r=self.radius,t=self.kind)
-                self.result.append(record)
-                self.id+=1 
-            self._disconnectKids(node)
-            self.processed.append(node)        
-            
-    def _instack(self,node,parents):
-        self.stack.append(node)
-        for p in parents:
-            self.queue.append(p)
-        while self.queue:
-            n=self.queue[0]
-            parents=self.inedges.get(n,[])
-            self.queue.pop(0)
-            #probably has a loop
-            if n in self.stack:
-                self._checkStack(n)
-            else:
-                if not parents:
-                    self._outputNode(n)
-                else:
-                    self.stack.append(n)
-                    for p in parents:
-                        self.queue.append(p)
-        self.stack.reverse()
-        for n in self.stack:
-            self._outputNode(n)
-        self.stack=[]
         
-    def _checkStack(self,node):
-        #this is because some nodes have more than one parent
-        if node==self.stack[-1]:
-            return
-        i=-1
-        loop=[node]
-        prev=node
-        while self.stack[i]!=node:
-            if prev in self.inedges.get(self.stack[i],[]):
-                loop.append(self.stack[i])
-                prev=self.stack[i]
-            i-=1
-        self.outedges[node].remove(loop[1])
-        self.inedges[loop[1]].remove(node)
-        self.o_inedges[loop[1]].remove(node)
-        newnode=node+'\''
-        self.nodes[newnode]=deepcopy(self.nodes[node])
-        self.outedges[newnode]=[loop[1]]
-        self.o_inedges[loop[1]].append(newnode)
-        self.inedges[loop[1]].append(newnode)
-        self._outputNode(newnode)
-        #print self.stack
-    
-    def _disconnectKids(self,node):
-        kids=self.outedges.get(node,[])
-        for kid in kids:
-            self.inedges[kid].remove(node)
-        if self.outedges.has_key(node):
-            self.outedges[node]=[]
-            
-    def _getNodes(self):
-        self.nodes={node.get('id'):(node.get('x'),node.get('y'),node.get('z')) for node in self.nml.xpath(r'//node') }
-    
-    def _getEdges(self):
-        self.inedges={}
-        self.outedges={}
-        self.o_inedges={}
-        for edge in self.nml.xpath(r'//edge'):
-            s=edge.get('source')
-            t=edge.get('target')
-            self.inedges.setdefault(t,[]).append(s)
-            self.outedges.setdefault(s,[]).append(t)
-        self.o_inedges=deepcopy(self.inedges)
-    
-    
-def parseOneFile(filename,radius,kind):    
-    try:
-        result=NmlParser(filename,radius,kind).process()
-    except:
-        print 'sorry,fail to parse '+filename
-        return[]
-    return result
-    
 def write2File(result,fname):
     with open(fname,'wb') as f:
         for item in result:
@@ -164,75 +97,69 @@ def write2File(result,fname):
 
     
 def checkFileName(filename):
-    type,name,kind='','',0
+    name,kind='',-1
     if os.path.isfile(filename):
         folder,filename=os.path.split(filename)
         n,ext=os.path.splitext(filename)
         name=n
-        if ext.lower()=='.nml':
-            type='nml'
-        elif ext.lower()=='.nmx':
-            type='nmx'
         n=n.split('_')
         if len(n)>=4 and n[3]=='soma':
-                kind=1
-    return(type,name,kind)
-    
-def getOptions(options,output):
-    radius=1.0
-    if options[0]=='-o':
-        flag=True
-        output=options[1]
-    elif options[0]=='--radius':
-        flag=False
-        radius=options[1]
+            kind=1
+        elif len(n)>=4 and n[3]=='skeleton':
+            kind=0
+    return(name,kind)
+
+
+def getOutputName(output,name):
+    rv=output
+    if not rv.endswith('.swc'):
+        if not os.path.isdir(rv):
+            os.makedirs(rv)
+        rv=os.path.join(rv,name+'.swc')
+    return rv
+
+def parseOneFile(filename,radius,kind):
+    if os.path.isfile(filename):
+        nml=etree.parse(filename)
     else:
-        print 'error: invalid options'
-        return 
-    if(len(options)==4):
-        options=options[2:]
-        if flag and options[0]=='--radius':
-            radius=options[1]
-        elif (not flag) and options[0]=='-o':
-            output=options[1]
-        else:
-            print 'error: invalid options'
+        nml=etree.fromstring(filename)
+    result=NmlParser(nml,radius,kind).process()
+    return result
+    
+    
+def parseFile(file,output,radius=1.0):
+    if file.lower().endswith('.nml'):
+        name,kind=checkFileName(file)
+        if kind==-1:
+            print 'invalid input file name {0}'.format(file)
             return
-    return output,radius
-    
-def process():
-    num=len(sys.argv)
-    if num==1 :
-         print 'error: nml or nmx file required'
-         return 
-    else:
-        filename=sys.argv[1]
-    type,name,kind=checkFileName(filename)
-    if not type:
-        print 'error: invalid nml/nmx file name'
-        return
+        result=parseOneFile(file,radius,kind)
+        of=getOutputName(output,name)
+        write2File(result,of)
+        print 'parse {0} done ,result saved at {1}'.format(file,of)
+    elif file.lower().endswith('.nmx'):
+        z=ZipFile(file,'r')
+        for f in z.namelist():
+            s=z.open(f)
+            folder,f=os.path.split(f)
+            of=getOutputName(output,f)
+            if len(f.split('_'))>=4 and f.split('_')[3]=='soma':    
+                result=parseOneFile(s.read(),radius,1)
+            elif len(f.split('_'))>=4 and f.split('_')[3]=='skeleton':    
+                result=parseOneFile(s.read(),radius,0)
+            else:
+                print '{0} contains valid file name {1}'.format(file,f)
+                continue
+            write2File(result,of)
+            print 'parse {0} done ,result saved at {1}'.format(f,of)
         
-    output=r'./'+name+'.swc'
-    radius=1.0
-    if(len(sys.argv)>2):
-        options=sys.argv[2:]
-        if len(options)==2 or len(options)==4:
-            output,radius=getOptions(options,output)
-        else:
-            print 'error: invalid options'
-            return
-    if not output.endswith('.swc'):
-        if not os.path.isdir(output):
-            os.makedirs(output)
-        output=os.path.join(output,name+'.swc')
-    if type=='nml':
-        result=parseOneFile(filename,radius,kind)
-        write2File(result,output)
-        print 'result saved at '+output
-    elif type=='nmx':
-        pass
-    
+
 if __name__=='__main__':
-    process()    
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('filename')
+    parser.add_argument('-o',action='store',default=r'./',help='output file name or directory')
+    parser.add_argument('--radius',action='store',default=1.0,type=float,help='radius default=1.0')
+    args=parser.parse_args()
+    parseFile(args.filename,args.o,args.radius) 
 
 
