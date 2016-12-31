@@ -1,3 +1,4 @@
+#coding=utf-8
 import sys
 import os
 import argparse
@@ -8,7 +9,14 @@ except ImportError:
 try:
     from cStringIO import StringIO
 except ImportError:
-    from StringIO import StringIO
+    try:
+        from io import StringIO
+    except:
+        from StringIO import StringIO
+try:
+    from sys import maxint as maxint
+except:
+    from sys import maxsize as maxint
 from copy import deepcopy
 from zipfile import ZipFile
 
@@ -40,7 +48,7 @@ class NmlParser(object):
     def _createGraph(self):
         self.nodes={node.get('id'):
             {'x':node.get('x'),'y':node.get('y'),
-             'z':node.get('z'),'visited':False,'index':sys.maxint,'child':[]} 
+             'z':node.get('z'),'visited':False,'index':maxint,'child':[]} 
              for node in self.nml.xpath(r'//node')}
         for edge in self.nml.xpath(r'//edge'):
             s=edge.get('source')
@@ -78,22 +86,28 @@ class NmlParser(object):
             
     def _getParamsAndComments(self):        
         for param in self.nml.xpath(r'//parameters'):
-            p=StringIO(etree.tostring(param))
+            try:
+                p=StringIO(etree.tostring(param).decode('utf-8'))
+            except:
+                p=StringIO(etree.tostring(param))
             for line in p.readlines():
                 self.result.append('#'+line)
         for com in self.nml.xpath(r'//comments'):
-            c=StringIO(etree.tostring(com))
+            try:
+                c=StringIO(etree.tostring(com).decode('utf-8'))
+            except:
+                c=StringIO(etree.tostring(com))
             for line in c.readlines():
                 self.result.append('#'+line)
         
         
 def write2File(result,fname):
-    with open(fname,'wb') as f:
+    with open(fname,'w') as f:
         for item in result:
             f.write(item)
             if not item.endswith('\n'):
                 f.write('\n')
-            f.flush()
+        f.flush()
 
     
 def checkFileName(filename):
@@ -131,12 +145,12 @@ def parseFile(file,output,radius=1.0):
     if file.lower().endswith('.nml'):
         name,kind=checkFileName(file)
         if kind==-1:
-            print 'invalid input file name {0}'.format(file)
+            print('invalid input file name {0}'.format(file))
             return
         result=parseOneFile(file,radius,kind)
         of=getOutputName(output,name)
         write2File(result,of)
-        print 'parse {0} done ,result saved at {1}'.format(file,of)
+        print('parse {0} done ,result saved at {1}'.format(file,of))
     elif file.lower().endswith('.nmx'):
         z=ZipFile(file,'r')
         for f in z.namelist():
@@ -148,10 +162,10 @@ def parseFile(file,output,radius=1.0):
             elif len(f.split('_'))>=4 and f.split('_')[3]=='skeleton':    
                 result=parseOneFile(s.read(),radius,0)
             else:
-                print '{0} contains valid file name {1}'.format(file,f)
+                print('{0} contains valid file name {1}'.format(file,f))
                 continue
             write2File(result,of)
-            print 'parse {0} done ,result saved at {1}'.format(f,of)
+            print('parse {0} done ,result saved at {1}'.format(f,of))
         
 
 if __name__=='__main__':
