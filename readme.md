@@ -17,8 +17,6 @@ this project helps convert nml or mnx format files to swc format files
     otherwise wo assume you are specifying a output directory and the output filename will be 
     output+somefile +'.swc'
     
-    if input is somefile.nmx and there are more than one nml files in nmx,you'd better specify
-    output a directory,or results will overridden
     radius default is 1.0 if don't specify a value
     
     

@@ -30,31 +30,35 @@ there are two ways to use this module:
 '''
 
 class NmlParser(object):
-    def __init__(self,nml,radius,kind):
+    def __init__(self,radius,contents):
         super(NmlParser,self).__init__()
         self.processed=[]
         self.id=1
-        self.nml=nml
-        self.kind=kind
+        self.contents=contents
         self.radius=radius
         self.result=[]
-   
+        self.nml=[]
+        self.nodes={}
+        
     def process(self):
-        self._getParamsAndComments()
         self._createGraph()
+        self._getParamsAndComments()
         self._dfs()
         return self.result
     
     def _createGraph(self):
-        self.nodes={node.get('id'):
-            {'x':node.get('x'),'y':node.get('y'),
-             'z':node.get('z'),'visited':False,'index':maxint,'child':[]} 
-             for node in self.nml.xpath(r'//node')}
-        for edge in self.nml.xpath(r'//edge'):
-            s=edge.get('source')
-            t=edge.get('target')
-            self.nodes[s]['child'].append(t)
-            self.nodes[t]['child'].append(s)
+        for content in self.contents:
+            self.nml.append((etree.fromstring(content['string']),content['kind']))
+        for nml in self.nml:
+            for node in nml[0].xpath(r'//node'):
+                self.nodes[node.get('id')]={'x':node.get('x'),'y':node.get('y'),'z':node.get('z'),
+                'visited':False,'index':maxint,'t':nml[1],'child':[]}
+        for nml in self.nml:
+            for edge in nml[0].xpath(r'//edge'):
+                s=edge.get('source')
+                t=edge.get('target')
+                self.nodes[s]['child'].append(t)
+                self.nodes[t]['child'].append(s)
     
     def _dfs(self):
         for node,attr in self.nodes.items():
@@ -81,24 +85,25 @@ class NmlParser(object):
   
     def _outputNode(self,attr,parent):
         record="{id} {t} {x} {y} {z} {r} {p}".format(id=attr['index'],
-        x=attr['x'],y=attr['y'],z=attr['z'],t=self.kind,r=self.radius,p=parent)
+        x=attr['x'],y=attr['y'],z=attr['z'],t=attr['t'],r=self.radius,p=parent)
         self.result.append(record)
             
-    def _getParamsAndComments(self):        
-        for param in self.nml.xpath(r'//parameters'):
-            try:
-                p=StringIO(etree.tostring(param).decode('utf-8'))
-            except:
-                p=StringIO(etree.tostring(param))
-            for line in p.readlines():
-                self.result.append('#'+line)
-        for com in self.nml.xpath(r'//comments'):
-            try:
-                c=StringIO(etree.tostring(com).decode('utf-8'))
-            except:
-                c=StringIO(etree.tostring(com))
-            for line in c.readlines():
-                self.result.append('#'+line)
+    def _getParamsAndComments(self):
+        for nml in self.nml:      
+            for param in nml[0].xpath(r'//parameters'):
+                try:
+                    p=StringIO(etree.tostring(param).decode('utf-8'))
+                except:
+                    p=StringIO(etree.tostring(param))
+                for line in p.readlines():
+                    self.result.append('#'+line)
+            for com in nml[0].xpath(r'//comments'):
+                try:
+                    c=StringIO(etree.tostring(com).decode('utf-8'))
+                except:
+                    c=StringIO(etree.tostring(com))
+                for line in c.readlines():
+                    self.result.append('#'+line)
         
         
 def write2File(result,fname):
@@ -109,20 +114,6 @@ def write2File(result,fname):
                 f.write('\n')
         f.flush()
 
-    
-def checkFileName(filename):
-    name,kind='',-1
-    if os.path.isfile(filename):
-        folder,filename=os.path.split(filename)
-        n,ext=os.path.splitext(filename)
-        name=n
-        n=n.split('_')
-        if len(n)>=4 and n[3]=='soma':
-            kind=1
-        elif len(n)>=4 and n[3]=='skeleton':
-            kind=0
-    return(name,kind)
-
 
 def getOutputName(output,name):
     rv=output
@@ -132,41 +123,36 @@ def getOutputName(output,name):
         rv=os.path.join(rv,name+'.swc')
     return rv
 
-def parseOneFile(filename,radius,kind):
-    if os.path.isfile(filename):
-        nml=etree.parse(filename)
-    else:
-        nml=etree.fromstring(filename)
-    result=NmlParser(nml,radius,kind).process()
-    return result
     
-    
-def parseFile(file,output,radius=1.0):
-    if file.lower().endswith('.nml'):
-        name,kind=checkFileName(file)
-        if kind==-1:
-            print('invalid input file name {0}'.format(file))
-            return
-        result=parseOneFile(file,radius,kind)
-        of=getOutputName(output,name)
-        write2File(result,of)
-        print('parse {0} done ,result saved at {1}'.format(file,of))
-    elif file.lower().endswith('.nmx'):
-        z=ZipFile(file,'r')
+def parseFile(filename,output,radius=1.0):
+    if not os.path.isfile(filename):
+        print('{0} does not exists!'.format(filename))
+        return 
+    of=getOutputName(output,filename[:-4])
+    if filename.lower().endswith('.nml'):
+        with open(filename,'r') as f:
+            result=NmlParser(radius,({'string':f.read(),'kind':0},)).process()
+            write2File(result,of)
+            print('parse {0} done ,result saved at {1}'.format(filename,of))
+    elif filename.lower().endswith('.nmx'):
+        z=ZipFile(filename,'r')
+        contents=[]
         for f in z.namelist():
             s=z.open(f)
-            folder,f=os.path.split(f)
-            of=getOutputName(output,f)
-            if len(f.split('_'))>=4 and f.split('_')[3]=='soma':    
-                result=parseOneFile(s.read(),radius,1)
+            d,f=os.path.split(f)
+            if len(f.split('_'))>=4 and f.split('_')[3]=='soma':
+                contents.append({'string':s.read(),'kind':1})
             elif len(f.split('_'))>=4 and f.split('_')[3]=='skeleton':    
-                result=parseOneFile(s.read(),radius,0)
+                contents.append({'string':s.read(),'kind':0})
             else:
-                print('{0} contains valid file name {1}'.format(file,f))
+                print('{0} contains invalid file name {1}'.format(filename,f))
                 continue
+        if contents:
+            result=NmlParser(radius,contents).process()
             write2File(result,of)
-            print('parse {0} done ,result saved at {1}'.format(f,of))
-        
+            print('parse {0} done ,result saved at {1}'.format(filename,of))
+    else:
+        print('invalid input file format (nml or nmx format required!)')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
