@@ -120,7 +120,7 @@ def getOutputName(output,name):
     if not rv.endswith('.swc'):
         if not os.path.isdir(rv):
             os.makedirs(rv)
-        rv=os.path.join(rv,name+'.swc')
+        rv=os.path.join(rv,os.path.split(name)[1][:-4]+'.swc')
     return rv
 
     
@@ -128,7 +128,7 @@ def parseFile(filename,output,radius=1.0):
     if not os.path.isfile(filename):
         print('{0} does not exists!'.format(filename))
         return 
-    of=getOutputName(output,filename[:-4])
+    of=getOutputName(output,filename)
     if filename.lower().endswith('.nml'):
         with open(filename,'r') as f:
             result=NmlParser(radius,({'string':f.read(),'kind':0},)).process()
