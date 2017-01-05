@@ -19,7 +19,6 @@ except:
     from sys import maxsize as maxint
 from copy import deepcopy
 from zipfile import ZipFile
-
 __doc__='''
 this module helps convert nml or nmx format files to swc format files.
 there are two ways to use this module:
@@ -28,7 +27,6 @@ there are two ways to use this module:
     from  nml2swc import parseFile
     parseFile(somefile.nml(or somefile.nmx),output file name or directory,radius)
 '''
-
 class NmlParser(object):
     def __init__(self,radius,contents):
         super(NmlParser,self).__init__()
@@ -41,11 +39,25 @@ class NmlParser(object):
         self.nodes={}
         
     def process(self):
-        self._createGraph()
-        self._getParamsAndComments()
-        self._dfs()
+        try:
+            max_recursion=sys.getrecursionlimit()
+            self._createGraph()
+            self._getParamsAndComments()
+            self._dfs()
+        except RuntimeError:
+            sys.setrecursionlimit(max_recursion*10)
+            self._clear()
+            self.process()
+            sys.setrecursionlimit(max_recursion)
         return self.result
     
+    def _clear(self):
+        self.processed=[]
+        self.id=1
+        self.result=[]
+        self.nml=[]
+        self.nodes={}
+        
     def _createGraph(self):
         for content in self.contents:
             self.nml.append((etree.fromstring(content['string']),content['kind']))
